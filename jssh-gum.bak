@@ -1,0 +1,795 @@
+#!/bin/bash
+
+# jssh-gum: SSH 서버 관리자 (gum 기반)
+# 간결하고 예쁜 터미널 UI로 SSH 서버를 관리합니다
+
+set -e
+
+# 스크립트 디렉토리
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIBS_DIR="$SCRIPT_DIR/libs"
+CONFIG_FILE="$SCRIPT_DIR/default.conf"
+SERVERS_FILE="$SCRIPT_DIR/servers.list"
+
+# 모듈 로드
+if [[ -f "$LIBS_DIR/installer.sh" ]]; then
+    source "$LIBS_DIR/installer.sh"
+fi
+
+if [[ -f "$LIBS_DIR/ui_utils.sh" ]]; then
+    source "$LIBS_DIR/ui_utils.sh"
+fi
+
+if [[ -f "$LIBS_DIR/ssh_utils.sh" ]]; then
+    source "$LIBS_DIR/ssh_utils.sh"
+fi
+
+# 초기 설정 검사 및 자동 설치
+initial_setup() {
+    echo "🔧 jssh-gum 초기화 중..."
+    echo ""
+    
+    # gum이 없으면 설치 마법사 실행
+    if ! command -v gum &> /dev/null; then
+        echo "필수 도구 설치가 필요합니다."
+        echo ""
+        if [[ -f "$LIBS_DIR/installer.sh" ]]; then
+            auto_install_wizard
+            local install_result=$?
+            if [[ $install_result -ne 0 ]]; then
+                echo ""
+                echo "❌ 초기 설정에 실패했습니다."
+                echo "   gum을 수동으로 설치한 후 다시 시도해주세요."
+                echo ""
+                echo "설치 방법:"
+                echo "  macOS: brew install gum"
+                echo "  Linux: sudo snap install gum"
+                echo "  또는: https://github.com/charmbracelet/gum/releases"
+                exit 1
+            fi
+        else
+            echo "❌ 설치 모듈을 찾을 수 없습니다."
+            echo "   gum을 수동으로 설치해주세요."
+            exit 1
+        fi
+    fi
+    
+    # 모듈 재로드 (gum 설치 후)
+    if [[ -f "$LIBS_DIR/ui_utils.sh" ]]; then
+        source "$LIBS_DIR/ui_utils.sh"
+    fi
+    
+    if [[ -f "$LIBS_DIR/ssh_utils.sh" ]]; then
+        source "$LIBS_DIR/ssh_utils.sh"
+    fi
+}
+
+# 설정 파일 로드
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        source "$CONFIG_FILE"
+    else
+        show_warning "설정 파일을 찾을 수 없습니다: $CONFIG_FILE"
+        create_default_config
+    fi
+}
+
+# 기본 설정 파일 생성
+create_default_config() {
+    cat > "$CONFIG_FILE" << 'CONF_EOF'
+# jssh-gum 기본 설정 파일
+# SSH 연결을 위한 기본값들을 정의합니다
+
+# 기본 SSH 포트
+DEFAULT_PORT=22
+
+# 기본 접속 계정
+DEFAULT_USER="root"
+
+# 기본 패스워드
+DEFAULT_PASSWORD="password"
+
+# 서버 목록 파일 경로
+SERVERS_FILE="$(dirname "$0")/servers.list"
+
+# Warp 터미널 완전 호환 모드 (exec 사용)
+# true: exec로 셸 교체 (Warp 기능 완전 보존, 연결 후 스크립트 종료)
+# false: 일반 모드 (연결 후 메뉴로 복귀)
+WARP_COMPATIBLE_MODE="true"
+
+# 설정 파일 버전
+CONFIG_VERSION="1.1"
+CONF_EOF
+    show_success "기본 설정 파일을 생성했습니다."
+}
+
+# 서버 목록 파일 생성
+create_servers_file() {
+    if [[ ! -f "$SERVERS_FILE" ]]; then
+        cat > "$SERVERS_FILE" << 'SERVERS_EOF'
+# 서버 목록 파일
+# 형식: 별칭|구분|hostname|ip|port|user|password
+# 예제 (실제 사용시 수정하세요)
+localhost|테스트|localhost|127.0.0.1|22|user|
+SERVERS_EOF
+        show_success "서버 목록 파일을 생성했습니다."
+    fi
+}
+
+# 메인 메뉴
+main_menu() {
+    while true; do
+        clear
+        show_header
+        
+        choice=$(choose_menu "📋 서버 목록\n➕ 서버 추가\n🔍 서버 검색\n⚙️  설정\n❌ 종료" "메뉴를 선택하세요:")
+        
+        case "$choice" in
+            "📋 서버 목록")
+                list_servers
+                ;;
+            "➕ 서버 추가")
+                add_server
+                ;;
+            "🔍 서버 검색")
+                search_servers
+                ;;
+            "⚙️  설정")
+                settings_menu
+                ;;
+            "❌ 종료")
+                show_success "👋 안녕히 가세요!"
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# 서버 목록 보기
+list_servers() {
+    clear
+    
+    # 헤더 표시
+    show_info "📋 등록된 서버 목록"
+    echo ""
+    
+    if [[ ! -f "$SERVERS_FILE" ]] || [[ ! -s "$SERVERS_FILE" ]]; then
+        show_error "등록된 서버가 없습니다."
+        echo ""
+        if confirm_dialog "서버를 추가하시겠습니까?"; then
+            add_server
+        fi
+        return
+    fi
+    
+    # 서버 데이터 수집 및 별칭 배열 생성
+    local server_data=""
+    local servers=()
+    local count=1
+    
+    # 헤더 라인 추가
+    server_data="No.|별칭|구분|호스트명|IP주소|포트|사용자\n"
+    
+    # 서버 목록 데이터 생성
+    while IFS='|' read -r alias category hostname ip port user password; do
+        # 주석이나 빈 줄 건너뛰기
+        [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
+        
+        servers+=("$alias")
+        
+        # 번호 추가하여 데이터 구성
+        local display_hostname="${hostname:-"-"}"
+        local display_user="${user:-$DEFAULT_USER}"
+        
+        server_data+="$count|$alias|$category|$display_hostname|$ip|$port|$display_user\n"
+        ((count++))
+    done < "$SERVERS_FILE"
+    
+    if [[ ${#servers[@]} -eq 0 ]]; then
+        show_error "연결할 서버가 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    # 단축키 설명 표시
+    echo "⌨️  단축키:"
+    echo "  ↑↓    : 서버 선택          j/k      : 위/아래 이동"
+    echo "  Ctrl+D/U : 페이지 다운/업   Space    : 페이지 다운"
+    echo "  Home/End : 처음/마지막     Enter    : 서버 연결"
+    echo "  s      : 검색 모드         ESC/q    : 메인 메뉴로"
+    echo ""
+    echo "📊 총 ${#servers[@]}개 서버 | 💡 's' 키를 눌러 검색하세요"
+    echo ""
+    
+    # gum table로 깔끔한 테이블 표시 및 선택
+    while true; do
+        local selected_line
+        selected_line=$(echo -e "$server_data" | gum table \
+            --separator="|" \
+            --border=rounded \
+            --border.foreground=39 \
+            --header.bold \
+            --header.foreground=39 \
+            --header.background=235 \
+            --cell.foreground=255 \
+            --selected.foreground=255 \
+            --selected.background=196 \
+            --widths="5,18,10,25,18,8,12" \
+            --height=20 || echo "")
+        
+        if [[ -n "$selected_line" ]]; then
+            # 선택된 라인에서 번호 추출 (첫 번째 컬럼)
+            local selected_number=$(echo "$selected_line" | cut -d'|' -f1)
+            
+            # 번호가 "No."가 아닌 경우 (헤더가 아닌 경우)
+            if [[ "$selected_number" =~ ^[0-9]+$ ]]; then
+                # 배열 인덱스는 0부터 시작하므로 1을 빼줌
+                local array_index=$((selected_number - 1))
+                if [[ $array_index -ge 0 ]] && [[ $array_index -lt ${#servers[@]} ]]; then
+                    local selected_alias="${servers[$array_index]}"
+                    connect_to_server "$selected_alias"
+                    break
+                fi
+            fi
+        else
+            # ESC나 취소로 나온 경우, 검색 모드인지 확인
+            echo ""
+            echo "💡 검색하려면 's'를 입력하세요 (Enter: 메인 메뉴)"
+            read -n1 -s key
+            case "$key" in
+                "s"|"S")
+                    search_and_filter_servers "$server_data" "servers"
+                    if [[ $? -eq 0 ]]; then
+                        break  # 서버가 선택되었으면 종료
+                    fi
+                    # 검색에서 돌아온 경우 테이블을 다시 표시
+                    clear
+                    show_info "📋 등록된 서버 목록"
+                    echo ""
+                    echo "⌨️  단축키:"
+                    echo "  ↑↓    : 서버 선택          j/k      : 위/아래 이동"
+                    echo "  Ctrl+D/U : 페이지 다운/업   Space    : 페이지 다운"
+                    echo "  Home/End : 처음/마지막     Enter    : 서버 연결"
+                    echo "  s      : 검색 모드         ESC/q    : 메인 메뉴로"
+                    echo ""
+                    echo "📊 총 ${#servers[@]}개 서버 | 💡 's' 키를 눌러 검색하세요"
+                    echo ""
+                    ;;
+                "")
+                    # Enter 키: 메인 메뉴로
+                    break
+                    ;;
+                *)
+                    # 다른 키: 테이블로 돌아가기
+                    clear
+                    show_info "📋 등록된 서버 목록"
+                    echo ""
+                    echo "⌨️  단축키:"
+                    echo "  ↑↓    : 서버 선택          j/k      : 위/아래 이동"
+                    echo "  Ctrl+D/U : 페이지 다운/업   Space    : 페이지 다운"
+                    echo "  Home/End : 처음/마지막     Enter    : 서버 연결"
+                    echo "  s      : 검색 모드         ESC/q    : 메인 메뉴로"
+                    echo ""
+                    echo "📊 총 ${#servers[@]}개 서버 | 💡 's' 키를 눌러 검색하세요"
+                    echo ""
+                    ;;
+            esac
+        fi
+    done
+}
+
+# 검색 및 필터링 함수
+search_and_filter_servers() {
+    local server_data="$1"
+    local servers_array_name="$2"
+    
+    clear
+    show_info "🔍 서버 검색"
+    echo ""
+    echo "검색 옵션을 생성하는 중..."
+    
+    # 검색 가능한 서버 목록 생성
+    local search_options=""
+    while IFS='|' read -r num alias category hostname ip port user; do
+        [[ -z "$num" || "$num" == "No." ]] && continue
+        search_options+="$num. $alias [$category] $user@$ip:$port ($hostname)\n"
+    done <<< "$(echo -e "$server_data" | tail -n +2)"
+    
+    echo ""
+    echo "💡 서버명, 구분, IP, 호스트명으로 실시간 검색 가능"
+    echo "💡 ESC를 눌러 서버 목록으로 돌아가기"
+    echo ""
+    
+    # gum filter로 실시간 검색
+    local selected_line
+    selected_line=$(echo -e "$search_options" | gum filter \
+        --placeholder "🔍 검색어를 입력하세요 (서버명/구분/IP/호스트명)..." \
+        --height 15 \
+        --no-limit \
+        --indicator="→ " \
+        --match.foreground=46 \
+        --text.foreground=255 || echo "")
+    
+    if [[ -n "$selected_line" ]]; then
+        # 선택된 라인에서 번호 추출
+        local selected_number=$(echo "$selected_line" | cut -d'.' -f1)
+        
+        if [[ "$selected_number" =~ ^[0-9]+$ ]]; then
+            local array_index=$((selected_number - 1))
+            # servers 배열의 크기 확인 (동적으로)
+            local servers_count=$(eval "echo \${#$servers_array_name[@]}")
+            if [[ $array_index -ge 0 ]] && [[ $array_index -lt $servers_count ]]; then
+                local selected_alias=$(eval "echo \${$servers_array_name[$array_index]}")
+                connect_to_server "$selected_alias"
+                return 0  # 서버가 선택됨
+            fi
+        fi
+    fi
+    
+    return 1  # 검색에서 돌아감
+}
+
+# 서버 추가
+add_server() {
+    clear
+    
+    show_info "➕ 새 서버 추가"
+    echo ""
+    
+    # 입력 폼
+    show_info "서버 정보를 입력하세요:"
+    echo ""
+    
+    local alias
+    alias=$(input_dialog "📝 별칭 (필수):" "예: 웹서버1, DB운영서버 등")
+    [[ -z "$alias" ]] && { 
+        show_error "별칭은 필수입니다."
+        wait_for_input
+        return
+    }
+    
+    # 중복 확인
+    if grep -q "^$alias|" "$SERVERS_FILE" 2>/dev/null; then
+        show_error "이미 존재하는 별칭입니다."
+        wait_for_input
+        return
+    fi
+    
+    local category
+    category=$(choose_menu "운영\n개발\n스테이징\n테스트\n기타" "🏷️  구분을 선택하세요")
+    
+    local hostname
+    hostname=$(input_dialog "🌐 호스트네임:" "예: web1.company.com (선택사항)")
+    
+    local ip
+    ip=$(input_dialog "🌍 IP 주소 (필수):" "예: 192.168.1.100")
+    [[ -z "$ip" ]] && { 
+        show_error "IP 주소는 필수입니다."
+        wait_for_input
+        return
+    }
+    
+    local port
+    port=$(input_dialog "🔌 SSH 포트:" "기본값: $DEFAULT_PORT")
+    [[ -z "$port" ]] && port="$DEFAULT_PORT"
+    
+    local user
+    user=$(input_dialog "👤 사용자명:" "기본값: $DEFAULT_USER")
+    [[ -z "$user" ]] && user="$DEFAULT_USER"
+    
+    local password
+    password=$(password_dialog "🔑 패스워드:" "패스워드 (기본값 사용시 빈칸)")
+    [[ -z "$password" ]] && password="$DEFAULT_PASSWORD"
+    
+    # 확인 화면
+    clear
+    show_info "✅ 입력 정보 확인"
+    echo ""
+    
+    # 정보를 테이블 형태로 표시
+    local confirm_data=""
+    confirm_data="항목|입력값\n"
+    confirm_data+="서버 별칭|$alias\n"
+    confirm_data+="서버 구분|$category\n"
+    confirm_data+="호스트네임|${hostname:-"(없음)"}\n"
+    confirm_data+="IP 주소|$ip\n"
+    confirm_data+="SSH 포트|$port\n"
+    confirm_data+="사용자명|$user\n"
+    confirm_data+="패스워드|$(echo "$password" | sed 's/./*/g')\n"
+    
+    show_table "$confirm_data" "|" "15,50"
+    echo ""
+    
+    if confirm_dialog "💾 이 정보로 서버를 추가하시겠습니까?"; then
+        echo "$alias|$category|$hostname|$ip|$port|$user|$password" >> "$SERVERS_FILE"
+        echo ""
+        show_success "✅ '$alias' 서버가 성공적으로 추가되었습니다!"
+    else
+        echo ""
+        show_warning "❌ 서버 추가가 취소되었습니다."
+    fi
+    
+    echo ""
+    wait_for_input
+}
+
+# 서버 검색
+search_servers() {
+    clear
+    
+    show_info "🔍 서버 검색"
+    echo ""
+    
+    if [[ ! -f "$SERVERS_FILE" ]] || [[ ! -s "$SERVERS_FILE" ]]; then
+        show_error "등록된 서버가 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    # 검색 가능한 서버 목록 생성
+    local search_list=""
+    local count=1
+    
+    while IFS='|' read -r alias category hostname ip port user password; do
+        [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
+        
+        local display_hostname="${hostname:-"-"}"
+        search_list+="$count. $alias ($category) [$display_hostname] - $ip:$port\n"
+        ((count++))
+    done < "$SERVERS_FILE"
+    
+    if [[ -z "$search_list" ]]; then
+        show_error "검색할 서버가 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    echo "💡 서버명, 카테고리, IP, 호스트명으로 검색할 수 있습니다"
+    echo ""
+    
+    # gum filter로 검색
+    local selected
+    selected=$(echo -e "$search_list" | gum filter \
+        --placeholder "🔍 검색어를 입력하세요 (서버명/카테고리/IP/호스트명)..." \
+        --height 20 \
+        --no-limit \
+        --indicator="→ " \
+        --match.foreground=46 \
+        --text.foreground=255 || echo "")
+    
+    if [[ -n "$selected" ]]; then
+        # 선택된 항목에서 별칭 추출
+        local alias=$(echo "$selected" | sed 's/^[0-9]*\. \([^ ]*\).*/\1/')
+        connect_to_server "$alias"
+    fi
+}
+
+# 서버 연결
+connect_to_server() {
+    local alias="$1"
+    
+    # 서버 정보 찾기
+    server_info=$(grep "^$alias|" "$SERVERS_FILE" || echo "")
+    
+    if [[ -z "$server_info" ]]; then
+        show_error "서버를 찾을 수 없습니다: $alias"
+        wait_for_input
+        return
+    fi
+    
+    IFS='|' read -r found_alias category hostname ip port user password <<< "$server_info"
+    
+    clear
+    
+    # 연결 명령 미리보기
+    local ssh_cmd="ssh"
+    [[ "$port" != "22" ]] && ssh_cmd="$ssh_cmd -p $port"
+    ssh_cmd="$ssh_cmd $user@$ip"
+    
+    # 서버 정보를 간단히 표시
+    show_info "🔗 SSH 서버 연결"
+    echo ""
+    echo "서버: $found_alias ($category)"
+    echo "주소: $user@$ip:$port"
+    echo "명령: $ssh_cmd"
+    echo ""
+    
+    if confirm_dialog "🚀 이 서버에 연결하시겠습니까?"; then
+        echo ""
+        show_info "SSH 연결을 시작합니다..."
+        echo "연결을 종료하려면 'exit' 명령을 사용하세요"
+        echo ""
+        
+        # 잠시 대기
+        sleep 1
+        
+        # SSH 연결 실행 (Warp 호환 모드 설정에 따라)
+        if [[ "${WARP_COMPATIBLE_MODE:-true}" == "true" ]]; then
+            # exec 모드: Warp 기능 완전 보존, 연결 후 스크립트 종료
+            connect_ssh_exec "$user" "$ip" "$port" "$password" "$DEFAULT_PASSWORD"
+        else
+            # 일반 모드: 연결 후 메뉴로 복귀
+            connect_ssh "$user" "$ip" "$port" "$password" "$DEFAULT_PASSWORD"
+        fi
+        
+        # 연결 종료 후
+        echo ""
+        show_info "🔌 SSH 연결이 종료되었습니다."
+        wait_for_input
+    fi
+}
+
+# 설정 메뉴
+settings_menu() {
+    while true; do
+        clear
+        
+        show_info "⚙️  설정 메뉴"
+        echo ""
+        
+        choice=$(choose_menu "📊 서버 통계\n🗑️  서버 삭제\n📄 파일 정보\n🔧 설정 편집\n🛠️  도구 설치\n🔙 뒤로 가기" "설정을 선택하세요:")
+        
+        case "$choice" in
+            "📊 서버 통계")
+                show_statistics
+                ;;
+            "🗑️  서버 삭제")
+                delete_server
+                ;;
+            "📄 파일 정보")
+                show_file_info
+                ;;
+            "🔧 설정 편집")
+                edit_config
+                ;;
+            "🛠️  도구 설치")
+                install_tools_menu
+                ;;
+            "🔙 뒤로 가기")
+                break
+                ;;
+        esac
+    done
+}
+
+# 서버 통계
+show_statistics() {
+    clear
+    
+    show_info "📊 서버 통계"
+    echo ""
+    
+    if [[ ! -f "$SERVERS_FILE" ]]; then
+        show_error "서버 목록 파일이 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    # 전체 서버 수 계산
+    local total=0
+    local categories=()
+    
+    # 서버 정보 수집
+    while IFS='|' read -r alias category hostname ip port user password; do
+        [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
+        ((total++))
+        categories+=("$category")
+    done < "$SERVERS_FILE"
+    
+    # 통계 정보 표시
+    echo "구분별 통계:"
+    echo ""
+    
+    # 카테고리별 통계 계산 (bash 3.2 호환)
+    local unique_categories=($(printf '%s\n' "${categories[@]}" | sort -u))
+    
+    # 각 카테고리 정보 출력
+    for cat in "${unique_categories[@]}"; do
+        local count=0
+        for check_cat in "${categories[@]}"; do
+            [[ "$check_cat" == "$cat" ]] && ((count++))
+        done
+        local percentage=$((count * 100 / total))
+        printf "  %-12s: %2d개 (%3d%%)\n" "$cat" "$count" "$percentage"
+    done
+    
+    echo ""
+    printf "  %-12s: %2d개 (100%%)\n" "총계" "$total"
+    echo ""
+    
+    wait_for_input
+}
+
+# 서버 삭제
+delete_server() {
+    clear
+    
+    show_warning "🗑️  서버 삭제"
+    echo ""
+    
+    if [[ ! -f "$SERVERS_FILE" ]] || [[ ! -s "$SERVERS_FILE" ]]; then
+        show_error "삭제할 서버가 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    # 서버 목록 생성 (번호와 함께)
+    local server_list=""
+    local count=1
+    local servers=()
+    
+    while IFS='|' read -r alias category hostname ip port user password; do
+        [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
+        
+        servers+=("$alias")
+        server_list+="$count. $alias ($category) - $ip:$port\n"
+        ((count++))
+    done < "$SERVERS_FILE"
+    
+    if [[ ${#servers[@]} -eq 0 ]]; then
+        show_error "삭제할 서버가 없습니다."
+        wait_for_input
+        return
+    fi
+    
+    echo "⚠️  주의: 삭제된 서버는 복구할 수 없습니다"
+    echo "💡 Space 키로 다중 선택, Enter로 확정"
+    echo ""
+    
+    # gum choose로 서버 다중 선택
+    local selected_displays
+    selected_displays=$(echo -e "$server_list" | gum choose \
+        --no-limit \
+        --header "🗑️  삭제할 서버를 선택하세요 (다중 선택 가능)..." \
+        --height 15 \
+        --cursor="→ " \
+        --selected.foreground=196 \
+        --cursor.foreground=212 || echo "")
+    
+    if [[ -n "$selected_displays" ]]; then
+        # 선택된 서버들의 별칭 배열 생성
+        local selected_aliases=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local alias=$(echo "$line" | sed 's/^[0-9]*\. \([^ ]*\).*/\1/')
+            selected_aliases+=("$alias")
+        done <<< "$selected_displays"
+        
+        if [[ ${#selected_aliases[@]} -eq 0 ]]; then
+            echo "선택된 서버가 없습니다."
+            wait_for_input
+            return
+        fi
+        
+        echo ""
+        echo "선택된 서버 목록:"
+        for alias in "${selected_aliases[@]}"; do
+            echo "  • $alias"
+        done
+        echo ""
+        
+        if confirm_dialog "⚠️  정말로 선택된 ${#selected_aliases[@]}개 서버를 삭제하시겠습니까?"; then
+            local deleted_count=0
+            for alias in "${selected_aliases[@]}"; do
+                # 각 서버를 삭제
+                if grep -q "^$alias|" "$SERVERS_FILE"; then
+                    grep -v "^$alias|" "$SERVERS_FILE" > "${SERVERS_FILE}.tmp"
+                    mv "${SERVERS_FILE}.tmp" "$SERVERS_FILE"
+                    ((deleted_count++))
+                fi
+            done
+            echo ""
+            show_success "✅ $deleted_count개 서버가 성공적으로 삭제되었습니다!"
+        else
+            echo ""
+            show_warning "❌ 서버 삭제가 취소되었습니다."
+        fi
+        
+        echo ""
+        wait_for_input
+    fi
+}
+
+# 파일 정보
+show_file_info() {
+    clear
+    
+    show_info "📄 파일 정보"
+    echo ""
+    
+    # 시스템 정보
+    echo "시스템 환경:"
+    echo "  운영체제: $(uname -s)"
+    echo "  터미널 크기: $(tput cols)x$(tput lines)"
+    echo "  현재 디렉토리: $SCRIPT_DIR"
+    echo "  gum 버전: $(gum --version 2>/dev/null || echo "확인불가")"
+    
+    echo ""
+    
+    # 파일 정보
+    echo "파일 정보:"
+    echo "  설정 파일: $CONFIG_FILE ($([ -f "$CONFIG_FILE" ] && wc -c < "$CONFIG_FILE" || echo "0") bytes)"
+    echo "  서버 목록: $SERVERS_FILE ($([ -f "$SERVERS_FILE" ] && wc -c < "$SERVERS_FILE" || echo "0") bytes)"
+    echo "  스크립트: $0 ($(wc -c < "$0") bytes)"
+    
+    echo ""
+    wait_for_input
+}
+
+# 설정 편집
+edit_config() {
+    clear
+    show_info "🔧 설정 편집"
+    echo ""
+    
+    editor="${EDITOR:-nano}"
+    
+    if confirm_dialog "설정 파일을 편집하시겠습니까? (편집기: $editor)"; then
+        "$editor" "$CONFIG_FILE"
+        show_success "✅ 설정이 저장되었습니다. 다시 시작하면 적용됩니다."
+    fi
+    
+    wait_for_input
+}
+
+# 도구 설치 메뉴
+install_tools_menu() {
+    clear
+    
+    show_info "🛠️  도구 설치"
+    echo ""
+    
+    # gum 상태 확인
+    if command -v gum &> /dev/null; then
+        show_success "✅ gum이 이미 설치되어 있습니다."
+        echo "   버전: $(gum --version 2>/dev/null || echo "확인불가")"
+    else
+        show_error "❌ gum이 설치되지 않았습니다."
+    fi
+    
+    echo ""
+    
+    # sshpass 상태 확인
+    if command -v sshpass &> /dev/null; then
+        show_success "✅ sshpass가 이미 설치되어 있습니다."
+        echo "   버전: $(sshpass -V 2>&1 | head -1)"
+    else
+        show_error "❌ sshpass가 설치되지 않았습니다."
+        echo ""
+        echo "sshpass는 SSH 연결 시 패스워드 자동 입력을 위한 도구입니다."
+        echo ""
+        
+        if confirm_dialog "sshpass를 설치하시겠습니까?"; then
+            install_sshpass
+        else
+            echo ""
+            echo "설치를 취소했습니다."
+            echo ""
+            echo "수동 설치 방법:"
+            echo "  macOS: brew install hudochenkov/sshpass/sshpass"
+            echo "  Linux: sudo apt-get install sshpass"
+            echo "  Windows: WSL 환경에서만 지원됩니다"
+        fi
+    fi
+    
+    echo ""
+    wait_for_input
+}
+
+# 메인 실행
+main() {
+    # 필수 도구 초기 설정 및 자동 설치
+    initial_setup
+    
+    # 설정 로드
+    load_config
+    
+    # 서버 목록 파일 생성
+    create_servers_file
+    
+    # 메인 메뉴 실행
+    main_menu
+}
+
+# 스크립트 실행
+main "$@"
