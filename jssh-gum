@@ -171,7 +171,7 @@ list_servers() {
     server_data="No.|별칭|구분|호스트명|IP주소|포트|사용자\n"
     
     # 서버 목록 데이터 생성
-    while IFS='|' read -r alias category aws_flag hostname ip port user password; do
+    while IFS='|' read -r alias category hostname ip port user password; do
         # 주석이나 빈 줄 건너뛰기
         [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
         
@@ -358,16 +358,8 @@ add_server() {
     local category
     category=$(choose_menu "운영\n개발\n스테이징\n테스트\n기타" "🏷️  구분을 선택하세요")
     
-    local aws_flag
-    aws_flag=$(choose_menu "\naws" "🌐 AWS 서버인가요? (빈칸=일반서버, aws=AWS서버)")
-    [[ -z "$aws_flag" ]] && aws_flag=""
-    
     local hostname
-    if [[ "$aws_flag" == "aws" ]]; then
-        hostname=$(input_dialog "🌐 호스트네임 (AWS의 경우 EC2 hostname):" "예: ec2-xx-xxx-xx-xxx.ap-southeast-2.compute.amazonaws.com")
-    else
-        hostname=$(input_dialog "🌐 호스트네임:" "예: web1.company.com (선택사항)")
-    fi
+    hostname=$(input_dialog "🌐 호스트네임:" "예: web1.company.com (선택사항)")
     
     local ip
     ip=$(input_dialog "🌍 IP 주소 (필수):" "예: 192.168.1.100")
@@ -485,7 +477,7 @@ connect_to_server() {
         return
     fi
     
-IFS='|' read -r found_alias category aws_flag hostname ip port user password <<< "$server_info"
+    IFS='|' read -r found_alias category hostname ip port user password <<< "$server_info"
     
     clear
     
@@ -514,10 +506,10 @@ IFS='|' read -r found_alias category aws_flag hostname ip port user password <<<
         # SSH 연결 실행 (Warp 호환 모드 설정에 따라)
         if [[ "${WARP_COMPATIBLE_MODE:-true}" == "true" ]]; then
             # exec 모드: Warp 기능 완전 보존, 연결 후 스크립트 종료
-            connect_ssh_exec "$user" "$ip" "$port" "$aws_flag" "$password" "$DEFAULT_PASSWORD"
+            connect_ssh_exec "$user" "$ip" "$port" "$password" "$DEFAULT_PASSWORD"
         else
             # 일반 모드: 연결 후 메뉴로 복귀
-            connect_ssh "$user" "$ip" "$port" "$aws_flag" "$password" "$DEFAULT_PASSWORD"
+            connect_ssh "$user" "$ip" "$port" "$password" "$DEFAULT_PASSWORD"
         fi
         
         # 연결 종료 후

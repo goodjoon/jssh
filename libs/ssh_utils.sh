@@ -2,90 +2,45 @@
 # ssh_utils.sh - SSH 연결 관련 유틸리티 모듈
 # jssh-gum에서 사용하는 SSH 관련 함수들
 
-# Warp SSH wrapper 찾기
-find_warp_ssh_wrapper() {
-    # Warp SSH wrapper 경로 후보들
-    local warp_paths=(
-        "/Applications/Warp.app/Contents/Resources/warp_ssh_helper"
-        "/usr/local/bin/warp_ssh_helper"
-        "$HOME/.warp/bin/warp_ssh_helper"
-        "$(which warp_ssh_helper 2>/dev/null)"
-    )
-    
-    for path in "${warp_paths[@]}"; do
-        if [[ -n "$path" ]] && [[ -x "$path" ]]; then
-            echo "$path"
-            return 0
-        fi
-    done
-    
-    return 1
-}
-
-# SSH 명령 결정 (Warp wrapper 우선)
-get_ssh_command() {
-    local warp_ssh
-    warp_ssh=$(find_warp_ssh_wrapper)
-    
-    if [[ -n "$warp_ssh" ]]; then
-        echo "$warp_ssh"
-    else
-        echo "ssh"
-    fi
-}
-
 # SSH 연결 함수
 connect_ssh() {
     local user="$1"
     local ip="$2"
     local port="$3"
-    local aws_flag="$4"
-    local password="$5"
-    local default_password="$6"
-    local use_exec="${7:-false}"  # 추가 파라미터: exec 사용 여부
+    local password="$4"
+    local default_password="$5"
+    local use_exec="${6:-false}"  # 추가 파라미터: exec 사용 여부
     
-    # Warp SSH wrapper 사용
-    local ssh_cmd
-    ssh_cmd=$(get_ssh_command)
-
-    # AWS가 있을 경우 hostname으로 직접 연결
-    if [[ "$aws_flag" == "aws" ]]; then
-        if [[ "$use_exec" == "true" ]]; then
-            exec "$ssh_cmd" "$ip"
-        else
-            "$ssh_cmd" "$ip"
-        fi
-        return
-    fi
-
     # SSH 명령 구성
     local ssh_args=()
-
+    
     # 포트 설정
     if [[ "$port" != "22" ]]; then
         ssh_args+=("-p" "$port")
     fi
-
+    
     # 사용자@호스트 추가
     ssh_args+=("$user@$ip")
     
-    # SSH 연결 실행
+    # SSH 연결 실행 (Warp의 기본 SSH wrapper 사용)
     if [[ -n "$password" ]] && [[ "$password" != "$default_password" ]]; then
         # sshpass 사용 (설치되어 있는 경우)
         if command -v sshpass &> /dev/null; then
             if [[ "$use_exec" == "true" ]]; then
-                exec sshpass -p "$password" "$ssh_cmd" "${ssh_args[@]}"
+                # exec로 Warp SSH wrapper 사용
+                exec sshpass -p "$password" command ssh "${ssh_args[@]}"
             else
-                sshpass -p "$password" "$ssh_cmd" "${ssh_args[@]}"
+                # 일반 실행
+                sshpass -p "$password" command ssh "${ssh_args[@]}"
             fi
         else
             # sshpass 자동 설치 시도
             if ensure_sshpass; then
                 # 설치 성공시 다시 시도
                 if [[ "$use_exec" == "true" ]]; then
-                    exec sshpass -p "$password" "$ssh_cmd" "${ssh_args[@]}"
+                    exec sshpass -p "$password" command ssh "${ssh_args[@]}"
                 else
-                    sshpass -p "$password" "$ssh_cmd" "${ssh_args[@]}"
+                    sshpass -p "$password" command ssh "${ssh_args[@]}"
                 fi
             else
                 # 설치 실패시 수동 입력 안내 및 직접 연결
@@ -97,25 +52,29 @@ connect_ssh() {
                 echo ""
                 
                 if [[ "$use_exec" == "true" ]]; then
-                    exec "$ssh_cmd" "${ssh_args[@]}"
+                    # exec로 Warp SSH wrapper 사용
+                    exec command ssh "${ssh_args[@]}"
                 else
-                    "$ssh_cmd" "${ssh_args[@]}"
+                    # 일반 실행
+                    command ssh "${ssh_args[@]}"
                 fi
             fi
         fi
     else
         # 패스워드 없이 직접 연결 (키 기반 인증)
         if [[ "$use_exec" == "true" ]]; then
-            exec "$ssh_cmd" "${ssh_args[@]}"
+            # exec로 Warp SSH wrapper 사용 (Warp 기능 완전 보존)
+            exec command ssh "${ssh_args[@]}"
         else
-            "$ssh_cmd" "${ssh_args[@]}"
+            # 일반 실행
+            command ssh "${ssh_args[@]}"
         fi
     fi
 }
 
 # SSH 연결 함수 (exec 버전 - Warp 완전 호환)
 connect_ssh_exec() {
-    connect_ssh "$1" "$2" "$3" "$4" "$5" "$6" "true"
+    connect_ssh "$1" "$2" "$3" "$4" "$5" "true"
 }
 
 # SSH 연결 정보 검증
