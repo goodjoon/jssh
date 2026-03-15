@@ -5,9 +5,9 @@
 # 메인 헤더 출력
 show_header() {
     if command -v gum &> /dev/null; then
-        echo "🚀 jssh-gum SSH 서버 관리자 🚀" | gum style --foreground 212 --border double --align center --width 60 --padding 1
+        echo "◆ jssh-gum SSH 서버 관리자 ◆" | gum style --foreground 212 --border double --align center --width 60 --padding 1
     else
-        echo "🚀 jssh-gum SSH 서버 관리자 🚀"
+        echo "◆ jssh-gum SSH 서버 관리자 ◆"
     fi
 }
 
@@ -17,7 +17,7 @@ show_success() {
     if command -v gum &> /dev/null; then
         echo "$message" | gum style --foreground 46 --bold --align center
     else
-        echo "✅ $message"
+        echo "✓ $message"
     fi
 }
 
@@ -27,7 +27,7 @@ show_error() {
     if command -v gum &> /dev/null; then
         echo "$message" | gum style --foreground 196 --align center
     else
-        echo "❌ $message"
+        echo "✗ $message"
     fi
 }
 
@@ -37,7 +37,7 @@ show_info() {
     if command -v gum &> /dev/null; then
         echo "$message" | gum style --foreground 39 --bold
     else
-        echo "💡 $message"
+        echo "→ $message"
     fi
 }
 
@@ -47,7 +47,7 @@ show_warning() {
     if command -v gum &> /dev/null; then
         echo "$message" | gum style --foreground 220 --bold
     else
-        echo "⚠️ $message"
+        echo "! $message"
     fi
 }
 
@@ -178,11 +178,11 @@ show_progress() {
 # 대기 입력
 wait_for_input() {
     local message="${1:-계속하려면 Enter를 누르세요...}"
-    
+
     if command -v gum &> /dev/null; then
-        gum input --placeholder "$message"
+        gum input --placeholder "$message" || true
     else
-        read -p "$message" -r
+        read -p "$message" -r || true
     fi
 }
 
@@ -190,7 +190,7 @@ wait_for_input() {
 interactive_table() {
     local data="$1"
     local separator="${2:-|}"
-    local placeholder="${3:-🔍 검색어를 입력하세요...}"
+    local placeholder="${3:-? 검색어를 입력하세요...}"
     local height="${4:-20}"
     
     if ! command -v gum &> /dev/null; then

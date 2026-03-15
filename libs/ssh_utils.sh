@@ -14,13 +14,17 @@ connect_ssh() {
     # SSH 명령 구성
     local ssh_args=()
     
-    # 포트 설정
-    if [[ "$port" != "22" ]]; then
+    # 포트 설정 (비어있거나 22이면 기본값 사용)
+    if [[ -n "$port" && "$port" != "22" ]]; then
         ssh_args+=("-p" "$port")
     fi
     
-    # 사용자@호스트 추가
-    ssh_args+=("$user@$ip")
+    # 사용자@호스트 추가 (user 비어있으면 SSH config에 위임)
+    if [[ -n "$user" ]]; then
+        ssh_args+=("$user@$ip")
+    else
+        ssh_args+=("$ip")
+    fi
     
     # SSH 연결 실행 (Warp의 기본 SSH wrapper 사용)
     if [[ -n "$password" ]] && [[ "$password" != "$default_password" ]]; then
