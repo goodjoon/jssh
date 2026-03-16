@@ -4,3 +4,4 @@ GCP VM01 (ssh-cfg)|개발|goodjoon-claw01||||
 MACBOOK PRO i7 4C 16GB|개발|goodjoon-mac|100.99.79.47|22|goodjoon|keiichi78
 3060RTX-서버(64G/12G/1T)|개발|goodjoon-ai-ubuntu01|192.168.55.102|22|goodjoon|keiichi78
 AWS프리티어(2026.07만료)|개발|amazonaws.com|ec2-16-176-49-115.ap-southeast-2.compute.amazonaws.com|22|ubuntu|x
+GCP CLAW01|개발|100.76.59.51|100.76.59.51|22|goodjoon|keiichi78
