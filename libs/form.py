@@ -226,7 +226,7 @@ def run_form(stdscr, title, info, fields):
             stdscr.addstr(
                 footer_y, PAD, sep, curses.color_pair(6) if curses.has_colors() else 0
             )
-            hint = "Tab/↑↓: 필드 이동   Enter: 저장   ESC: 취소"
+            hint = "Tab/↑↓: 이동   Enter: 저장   ESC: 취소   Ctrl-G: SSH키 생성"
             stdscr.addstr(
                 footer_y + 1,
                 PAD,
@@ -254,9 +254,11 @@ def run_form(stdscr, title, info, fields):
         code = ord(ch) if isinstance(ch, str) else ch
 
         if code == 27:  # ESC
-            return None
+            return (None, 1)
         elif code in (10, 13):  # Enter → 저장
-            return ["".join(v) for v in values]
+            return (["".join(v) for v in values], 0)
+        elif code == 7: # Ctrl-G → SSH키 생성 (특별 종료 코드 7)
+            return (["".join(v) for v in values], 7)
         elif code == 9:  # Tab → 다음
             current = (current + 1) % len(fields)
         elif code == curses.KEY_BTAB:  # Shift-Tab → 이전
@@ -340,12 +342,19 @@ def main():
     os.dup2(old_in, 0)
     os.close(old_in)
 
-    if result is None:
-        sys.exit(1)
+    if isinstance(result, tuple):
+        result_data, exit_code = result
+    else:
+        result_data = result
+        exit_code = 1 if result is None else 0
 
-    for v in result:
+    if result_data is None:
+        sys.exit(exit_code)
+
+    for v in result_data:
         print(v)
-
+        
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
