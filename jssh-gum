@@ -165,12 +165,13 @@ list_servers() {
         local all_aliases=()
         local raw_lines=()
 
-        while IFS='|' read -r alias category hostname ip port user password; do
+        while IFS='|' read -r alias category hostname ip port user password ssh_key; do
             [[ "$alias" =~ ^# ]] || [[ -z "$alias" ]] && continue
             all_aliases+=("$alias")
             local display_hostname="${hostname:-"-"}"
             local display_user="${user:-${DEFAULT_USER:-root}}"
-            raw_lines+=("${alias}	${category}	${display_hostname}	${ip}	${port}	${display_user}")
+            local display_key="${ssh_key:-"-"}"
+            raw_lines+=("${alias}	${category}	${display_hostname}	${ip}	${port}	${display_user}	${display_key}")
         done < "$SERVERS_FILE"
 
         if [[ ${#all_aliases[@]} -eq 0 ]]; then
@@ -184,7 +185,7 @@ list_servers() {
         py_out=$(python3 - <<'PYEOF' "${raw_lines[@]}"
 import sys, unicodedata
 
-MAX = {"alias": 26, "cat": 6, "host": 22, "ip": 18, "port": 4, "user": 10}
+MAX = {"alias": 26, "cat": 6, "host": 22, "ip": 18, "port": 4, "user": 10, "key": 16}
 
 def dw(s):
     w = 0
@@ -210,8 +211,8 @@ def pad(s, width):
 
 rows = []
 for line in sys.argv[1:]:
-    parts = line.split("\t", 5)
-    while len(parts) < 6:
+    parts = line.split("\t", 6)
+    while len(parts) < 7:
         parts.append("")
     rows.append(parts)
 
@@ -223,25 +224,27 @@ W_host = max(6,  min(MAX["host"],  max((dw(r[2]) for r in rows), default=6)))
 W_ip   = max(9,  min(MAX["ip"],    max((dw(r[3]) if r[3] and r[3] != "-" else dw("(ssh cfg)") for r in rows), default=9)))
 W_port = max(4,  min(MAX["port"],  max((dw(r[4]) for r in rows), default=4)))
 W_user = max(6,  min(MAX["user"],  max((dw(r[5]) for r in rows), default=6)))
+W_key  = max(6,  min(MAX["key"],   max((dw(r[6]) if len(r)>6 else 1 for r in rows), default=6)))
 
 def sep(w): return "─" * w
 
 hdr = (" " + pad("No.", W_no) + " │ " + pad("별칭", W_al) + " │ " +
        pad("구분", W_cat) + " │ " + pad("호스트명", W_host) + " │ " +
        pad("IP주소", W_ip) + " │ " + pad("포트", W_port) + " │ " +
-       pad("사용자", W_user))
+       pad("사용자", W_user) + " │ " + pad("SSH키", W_key))
 sep_row = (sep(W_no+2) + "┼" + sep(W_al+2) + "┼" + sep(W_cat+2) + "┼" +
            sep(W_host+2) + "┼" + sep(W_ip+2) + "┼" + sep(W_port+2) + "┼" +
-           sep(W_user+2))
+           sep(W_user+2) + "┼" + sep(W_key+2))
 
 print("HDR:" + hdr)
 print("SEP:" + sep_row)
 for i, r in enumerate(rows, 1):
     disp_ip = r[3] if r[3] and r[3] != "-" else "(ssh cfg)"
+    disp_key = r[6] if len(r)>6 and r[6] else "-"
     row = (" " + pad(str(i), W_no) + " │ " + pad(r[0], W_al) + " │ " +
            pad(r[1], W_cat) + " │ " + pad(r[2], W_host) + " │ " +
            pad(disp_ip, W_ip) + " │ " + pad(r[4], W_port) + " │ " +
-           pad(r[5], W_user))
+           pad(r[5], W_user) + " │ " + pad(disp_key, W_key))
     print(str(i) + "§" + row)
 PYEOF
 )
@@ -406,10 +409,11 @@ add_server() {
         "IP 주소" ""             "0" \
         "포트"    "$DEFAULT_PORT" "0" \
         "사용자"  "$DEFAULT_USER" "0" \
-        "패스워드" ""             "1") && form_exit=0 || form_exit=$?
+        "패스워드" ""             "1" \
+        "SSH키"   ""             "0") && form_exit=0 || form_exit=$?
     [[ "$form_exit" -ne 0 ]] && return 0   # ESC → 목록으로 복귀
 
-    local new_alias new_category new_hostname new_ip new_port new_user new_password
+    local new_alias new_category new_hostname new_ip new_port new_user new_password new_ssh_key
     new_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
     new_category=$( printf '%s\n' "$form_out" | sed -n '2p')
     new_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
@@ -417,6 +421,7 @@ add_server() {
     new_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
     new_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
     new_password=$( printf '%s\n' "$form_out" | sed -n '7p')
+    new_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
 
     # 별칭 필수 확인
     if [[ -z "$new_alias" ]]; then
@@ -437,7 +442,7 @@ add_server() {
     [[ -z "$new_user" ]]     && new_user="$DEFAULT_USER"
     [[ -z "$new_password" ]] && new_password="$DEFAULT_PASSWORD"
 
-    echo "$new_alias|$new_category|$new_hostname|$new_ip|$new_port|$new_user|$new_password" >> "$SERVERS_FILE"
+    echo "$new_alias|$new_category|$new_hostname|$new_ip|$new_port|$new_user|$new_password|$new_ssh_key" >> "$SERVERS_FILE"
     show_success "'$new_alias' 서버가 추가되었습니다."
     sleep 1
 }
@@ -610,8 +615,8 @@ edit_server() {
         return
     fi
 
-    local cur_alias cur_category cur_hostname cur_ip cur_port cur_user cur_password
-    IFS='|' read -r cur_alias cur_category cur_hostname cur_ip cur_port cur_user cur_password \
+    local cur_alias cur_category cur_hostname cur_ip cur_port cur_user cur_password cur_ssh_key
+    IFS='|' read -r cur_alias cur_category cur_hostname cur_ip cur_port cur_user cur_password cur_ssh_key \
         <<< "$server_info"
 
     # curses 폼 실행 (모든 필드 동시에 표시, Tab으로 이동)
@@ -626,10 +631,11 @@ edit_server() {
         "IP 주소" "$cur_ip"      "0" \
         "포트"    "$cur_port"    "0" \
         "사용자"  "$cur_user"    "0" \
-        "패스워드" "$cur_password" "1") && form_exit=0 || form_exit=$?
+        "패스워드" "$cur_password" "1" \
+        "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
     [[ "$form_exit" -ne 0 ]] && return 0   # ESC → 목록으로 복귀
 
-    local new_alias new_category new_hostname new_ip new_port new_user new_password
+    local new_alias new_category new_hostname new_ip new_port new_user new_password new_ssh_key
     new_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
     new_category=$( printf '%s\n' "$form_out" | sed -n '2p')
     new_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
@@ -637,6 +643,7 @@ edit_server() {
     new_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
     new_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
     new_password=$( printf '%s\n' "$form_out" | sed -n '7p')
+    new_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
 
     [[ -z "$new_alias" ]]   && new_alias="$cur_alias"
     [[ -z "$new_port" ]]    && new_port="$cur_port"
@@ -652,7 +659,7 @@ edit_server() {
 
     # 파일 업데이트 (awk: 첫 번째 필드가 일치하는 행만 교체)
     awk -F'|' -v old="$cur_alias" \
-        -v new="${new_alias}|${new_category}|${new_hostname}|${new_ip}|${new_port}|${new_user}|${new_password}" \
+        -v new="${new_alias}|${new_category}|${new_hostname}|${new_ip}|${new_port}|${new_user}|${new_password}|${new_ssh_key}" \
         '$1 == old { print new; next } { print }' \
         "$SERVERS_FILE" > "${SERVERS_FILE}.tmp" \
         && mv "${SERVERS_FILE}.tmp" "$SERVERS_FILE"
@@ -725,7 +732,7 @@ connect_to_server() {
         return
     fi
     
-    IFS='|' read -r found_alias category hostname ip port user password <<< "$server_info"
+    IFS='|' read -r found_alias category hostname ip port user password ssh_key <<< "$server_info"
     
     # SSH 연결 대상 결정: ip 비어있으면 hostname을 SSH config alias로 사용
     local ssh_target
@@ -740,6 +747,9 @@ connect_to_server() {
     # 연결 명령 미리보기
     local ssh_cmd="ssh"
     [[ -n "$port" && "$port" != "22" ]] && ssh_cmd="$ssh_cmd -p $port"
+    if [[ -n "$ssh_key" ]]; then
+        ssh_cmd="$ssh_cmd -i $ssh_key"
+    fi
     if [[ -n "$user" ]]; then
         ssh_cmd="$ssh_cmd $user@$ssh_target"
     else
@@ -754,6 +764,9 @@ connect_to_server() {
         echo "주소: ${user:+$user@}$ssh_target:$port"
     else
         echo "주소: ${user:+$user@}$ssh_target  (SSH config)"
+    fi
+    if [[ -n "$ssh_key" ]]; then
+        echo "SSH키: $ssh_key"
     fi
     echo "명령: $ssh_cmd"
     echo ""
@@ -770,10 +783,10 @@ connect_to_server() {
         # SSH 연결 실행 (Warp 호환 모드 설정에 따라)
         if [[ "${WARP_COMPATIBLE_MODE:-true}" == "true" ]]; then
             # exec 모드: Warp 기능 완전 보존, 연결 후 스크립트 종료
-            connect_ssh_exec "$user" "$ssh_target" "$port" "$password" "$DEFAULT_PASSWORD"
+            connect_ssh_exec "$user" "$ssh_target" "$port" "$password" "$DEFAULT_PASSWORD" "$ssh_key"
         else
             # 일반 모드: 연결 후 메뉴로 복귀
-            connect_ssh "$user" "$ssh_target" "$port" "$password" "$DEFAULT_PASSWORD"
+            connect_ssh "$user" "$ssh_target" "$port" "$password" "$DEFAULT_PASSWORD" "false" "$ssh_key"
         fi
         
         # 연결 종료 후

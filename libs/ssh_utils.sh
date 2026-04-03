@@ -10,6 +10,7 @@ connect_ssh() {
     local password="$4"
     local default_password="$5"
     local use_exec="${6:-false}"  # 추가 파라미터: exec 사용 여부
+    local ssh_key="$7"  # 추가 파라미터: ssh key 경로
     
     # SSH 명령 구성 (자동 접속 시 호스트 키 검사 및 로그 레벨 최적화)
     local ssh_args=("-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null" "-o" "LogLevel=ERROR")
@@ -17,6 +18,13 @@ connect_ssh() {
     # 포트 설정 (비어있거나 22이면 기본값 사용)
     if [[ -n "$port" && "$port" != "22" ]]; then
         ssh_args+=("-p" "$port")
+    fi
+    
+    # SSH 키 설정
+    if [[ -n "$ssh_key" ]]; then
+        # ~를 홈 디렉토리로 확장
+        ssh_key="${ssh_key/#\~/$HOME}"
+        ssh_args+=("-i" "$ssh_key")
     fi
     
     # 사용자@호스트 추가 (user 비어있으면 SSH config에 위임)
@@ -76,7 +84,7 @@ connect_ssh() {
 
 # SSH 연결 함수 (exec 버전 - Warp 완전 호환)
 connect_ssh_exec() {
-    connect_ssh "$1" "$2" "$3" "$4" "$5" "true"
+    connect_ssh "$1" "$2" "$3" "$4" "$5" "true" "$6"
 }
 
 # SSH 연결 정보 검증
