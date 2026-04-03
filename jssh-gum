@@ -137,6 +137,70 @@ SERVERS_EOF
     fi
 }
 
+# SSH 키 생성 마법사
+generate_ssh_key_wizard() {
+    clear
+    show_info "🔑 SSH 키 신규 생성"
+    echo ""
+    
+    # 1. 파일 이름 입력
+    echo "새로운 SSH 키 파일 이름을 입력하세요 (예: id_ed25519_new)"
+    local key_name
+    key_name=$(gum input --placeholder "파일 이름")
+    [[ -z "$key_name" ]] && return 1
+
+    # 2. 접속 ID 입력
+    echo ""
+    echo "SSH 접속 ID (코멘트)를 입력하세요 (예: my-server-key)"
+    local key_comment
+    key_comment=$(gum input --placeholder "접속 ID")
+    [[ -z "$key_comment" ]] && key_comment="jssh-key"
+
+    # 3. 경로 입력
+    echo ""
+    echo "저장할 경로를 입력하세요 (기본값: ~/.ssh)"
+    local key_dir
+    key_dir=$(gum input --placeholder "~/.ssh" --value "~/.ssh")
+    [[ -z "$key_dir" ]] && key_dir="~/.ssh"
+    
+    # 경로 변환 (~ 확장)
+    local eval_dir="${key_dir/#\~/$HOME}"
+    
+    # 디렉토리 생성
+    if [[ ! -d "$eval_dir" ]]; then
+        echo ""
+        show_info "디렉토리가 존재하지 않습니다. 생성합니다: $eval_dir"
+        mkdir -p "$eval_dir"
+    fi
+    
+    local full_path="$eval_dir/$key_name"
+    
+    # 파일 존재 여부 확인
+    if [[ -f "$full_path" ]]; then
+        echo ""
+        show_error "경고: 파일이 이미 존재합니다 ($full_path)"
+        sleep 2
+        return 1
+    fi
+    
+    echo ""
+    show_info "키를 생성하는 중입니다..."
+    # 키 생성 실행
+    if ssh-keygen -t ed25519 -C "$key_comment" -f "$full_path" -N ""; then
+        echo ""
+        show_success "SSH 키가 성공적으로 생성되었습니다!"
+        # 변환 전의 경로 문자열(~ 유지)로 리턴하여 폼에 예쁘게 보이도록 함
+        echo "$key_dir/$key_name"
+        sleep 2
+        return 0
+    else
+        echo ""
+        show_error "키 생성에 실패했습니다."
+        sleep 2
+        return 1
+    fi
+}
+
 # 서버 목록 보기 (fzf 기반 테이블 + 실시간 검색 + footer 메뉴)
 list_servers() {
     local FOOTER='  [Enter] 접속   [^A] 추가   [^D] 삭제   [^E] 편집   [^O] 순서변경   [^S] 설정   [ESC] 종료'
@@ -398,52 +462,73 @@ search_and_filter_servers() {
 add_server() {
     local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다."
 
-    # curses 폼 실행 (모든 필드 빈 값으로 시작)
     local form_out form_exit
-    form_out=$(python3 "$LIBS_DIR/form.py" \
-        --title "서버 추가" \
-        --info  "$INFO_MSG" \
-        "별칭"    ""              "0" \
-        "구분"    ""              "0" \
-        "호스트명" ""             "0" \
-        "IP 주소" ""             "0" \
-        "포트"    "$DEFAULT_PORT" "0" \
-        "사용자"  "$DEFAULT_USER" "0" \
-        "패스워드" ""             "1" \
-        "SSH키"   ""             "0") && form_exit=0 || form_exit=$?
-    [[ "$form_exit" -ne 0 ]] && return 0   # ESC → 목록으로 복귀
+    local cur_alias="" cur_category="" cur_hostname="" cur_ip="" cur_port="$DEFAULT_PORT" cur_user="$DEFAULT_USER" cur_password="" cur_ssh_key=""
 
-    local new_alias new_category new_hostname new_ip new_port new_user new_password new_ssh_key
-    new_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
-    new_category=$( printf '%s\n' "$form_out" | sed -n '2p')
-    new_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
-    new_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
-    new_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
-    new_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
-    new_password=$( printf '%s\n' "$form_out" | sed -n '7p')
-    new_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+    while true; do
+        form_out=$(python3 "$LIBS_DIR/form.py" \
+            --title "서버 추가" \
+            --info  "$INFO_MSG" \
+            "별칭"    "$cur_alias"    "0" \
+            "구분"    "$cur_category" "0" \
+            "호스트명" "$cur_hostname" "0" \
+            "IP 주소" "$cur_ip"      "0" \
+            "포트"    "$cur_port"    "0" \
+            "사용자"  "$cur_user"    "0" \
+            "패스워드" "$cur_password" "1" \
+            "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
+
+        if [[ "$form_exit" -eq 1 ]]; then
+            return 0   # ESC → 목록으로 복귀
+        fi
+
+        # 값 갱신 (저장 전이나 마법사 이동 전 현재 값 유지)
+        cur_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
+        cur_category=$( printf '%s\n' "$form_out" | sed -n '2p')
+        cur_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
+        cur_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
+        cur_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
+        cur_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
+        cur_password=$( printf '%s\n' "$form_out" | sed -n '7p')
+        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+
+        if [[ "$form_exit" -eq 7 ]]; then
+            # Ctrl-G: 키 생성 마법사 실행
+            local generated_key wizard_exit
+            generated_key=$(generate_ssh_key_wizard) && wizard_exit=0 || wizard_exit=$?
+            
+            if [[ $wizard_exit -eq 0 && -n "$generated_key" ]]; then
+                cur_ssh_key=$(printf '%s\n' "$generated_key" | tail -n 1)
+            fi
+            continue # 폼 다시 열기
+        fi
+
+        if [[ "$form_exit" -eq 0 ]]; then
+            break # Enter -> 저장
+        fi
+    done
 
     # 별칭 필수 확인
-    if [[ -z "$new_alias" ]]; then
+    if [[ -z "$cur_alias" ]]; then
         show_error "별칭은 필수입니다."
         sleep 1
         return
     fi
 
     # 중복 확인
-    if awk -F'|' -v a="$new_alias" '$1 == a { exit 0 } END { exit 1 }' "$SERVERS_FILE" 2>/dev/null; then
-        show_error "이미 존재하는 별칭입니다: $new_alias"
+    if awk -F'|' -v a="$cur_alias" '$1 == a { exit 0 } END { exit 1 }' "$SERVERS_FILE" 2>/dev/null; then
+        show_error "이미 존재하는 별칭입니다: $cur_alias"
         sleep 1
         return
     fi
 
     # 기본값 적용
-    [[ -z "$new_port" ]]     && new_port="$DEFAULT_PORT"
-    [[ -z "$new_user" ]]     && new_user="$DEFAULT_USER"
-    [[ -z "$new_password" ]] && new_password="$DEFAULT_PASSWORD"
+    [[ -z "$cur_port" ]]     && cur_port="$DEFAULT_PORT"
+    [[ -z "$cur_user" ]]     && cur_user="$DEFAULT_USER"
+    [[ -z "$cur_password" ]] && cur_password="$DEFAULT_PASSWORD"
 
-    echo "$new_alias|$new_category|$new_hostname|$new_ip|$new_port|$new_user|$new_password|$new_ssh_key" >> "$SERVERS_FILE"
-    show_success "'$new_alias' 서버가 추가되었습니다."
+    echo "$cur_alias|$cur_category|$cur_hostname|$cur_ip|$cur_port|$cur_user|$cur_password|$cur_ssh_key" >> "$SERVERS_FILE"
+    show_success "'$cur_alias' 서버가 추가되었습니다."
     sleep 1
 }
 
@@ -619,52 +704,73 @@ edit_server() {
     IFS='|' read -r cur_alias cur_category cur_hostname cur_ip cur_port cur_user cur_password cur_ssh_key \
         <<< "$server_info"
 
-    # curses 폼 실행 (모든 필드 동시에 표시, Tab으로 이동)
-    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다."
+    local original_alias="$cur_alias" # 변경 감지를 위해 원본 백업
     local form_out form_exit
-    form_out=$(python3 "$LIBS_DIR/form.py" \
-        --title "서버 편집" \
-        --info  "$INFO_MSG" \
-        "별칭"    "$cur_alias"    "0" \
-        "구분"    "$cur_category" "0" \
-        "호스트명" "$cur_hostname" "0" \
-        "IP 주소" "$cur_ip"      "0" \
-        "포트"    "$cur_port"    "0" \
-        "사용자"  "$cur_user"    "0" \
-        "패스워드" "$cur_password" "1" \
-        "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
-    [[ "$form_exit" -ne 0 ]] && return 0   # ESC → 목록으로 복귀
+    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다."
 
-    local new_alias new_category new_hostname new_ip new_port new_user new_password new_ssh_key
-    new_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
-    new_category=$( printf '%s\n' "$form_out" | sed -n '2p')
-    new_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
-    new_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
-    new_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
-    new_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
-    new_password=$( printf '%s\n' "$form_out" | sed -n '7p')
-    new_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+    while true; do
+        form_out=$(python3 "$LIBS_DIR/form.py" \
+            --title "서버 편집" \
+            --info  "$INFO_MSG" \
+            "별칭"    "$cur_alias"    "0" \
+            "구분"    "$cur_category" "0" \
+            "호스트명" "$cur_hostname" "0" \
+            "IP 주소" "$cur_ip"      "0" \
+            "포트"    "$cur_port"    "0" \
+            "사용자"  "$cur_user"    "0" \
+            "패스워드" "$cur_password" "1" \
+            "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
 
-    [[ -z "$new_alias" ]]   && new_alias="$cur_alias"
-    [[ -z "$new_port" ]]    && new_port="$cur_port"
+        if [[ "$form_exit" -eq 1 ]]; then
+            return 0   # ESC → 목록으로 복귀
+        fi
+
+        # 폼 데이터 갱신
+        cur_alias=$(    printf '%s\n' "$form_out" | sed -n '1p')
+        cur_category=$( printf '%s\n' "$form_out" | sed -n '2p')
+        cur_hostname=$( printf '%s\n' "$form_out" | sed -n '3p')
+        cur_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
+        cur_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
+        cur_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
+        cur_password=$( printf '%s\n' "$form_out" | sed -n '7p')
+        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+
+        if [[ "$form_exit" -eq 7 ]]; then
+            # Ctrl-G: 키 생성 마법사 실행
+            local generated_key wizard_exit
+            generated_key=$(generate_ssh_key_wizard) && wizard_exit=0 || wizard_exit=$?
+            
+            if [[ $wizard_exit -eq 0 && -n "$generated_key" ]]; then
+                cur_ssh_key=$(printf '%s\n' "$generated_key" | tail -n 1)
+            fi
+            continue # 폼 다시 열기
+        fi
+
+        if [[ "$form_exit" -eq 0 ]]; then
+            break # Enter -> 저장
+        fi
+    done
+
+    [[ -z "$cur_alias" ]]   && cur_alias="$original_alias"
+    [[ -z "$cur_port" ]]    && cur_port="$DEFAULT_PORT"
 
     # 별칭 변경 시 중복 확인
-    if [[ "$new_alias" != "$cur_alias" ]]; then
-        if awk -F'|' -v a="$new_alias" '$1 == a { exit 0 } END { exit 1 }' "$SERVERS_FILE" 2>/dev/null; then
-            show_error "이미 존재하는 별칭입니다: $new_alias"
+    if [[ "$cur_alias" != "$original_alias" ]]; then
+        if awk -F'|' -v a="$cur_alias" '$1 == a { exit 0 } END { exit 1 }' "$SERVERS_FILE" 2>/dev/null; then
+            show_error "이미 존재하는 별칭입니다: $cur_alias"
             sleep 1
             return
         fi
     fi
 
     # 파일 업데이트 (awk: 첫 번째 필드가 일치하는 행만 교체)
-    awk -F'|' -v old="$cur_alias" \
-        -v new="${new_alias}|${new_category}|${new_hostname}|${new_ip}|${new_port}|${new_user}|${new_password}|${new_ssh_key}" \
+    awk -F'|' -v old="$original_alias" \
+        -v new="${cur_alias}|${cur_category}|${cur_hostname}|${cur_ip}|${cur_port}|${cur_user}|${cur_password}|${cur_ssh_key}" \
         '$1 == old { print new; next } { print }' \
         "$SERVERS_FILE" > "${SERVERS_FILE}.tmp" \
         && mv "${SERVERS_FILE}.tmp" "$SERVERS_FILE"
 
-    show_success "'${new_alias}' 저장되었습니다."
+    show_success "'${cur_alias}' 저장되었습니다."
     sleep 1
 }
 
