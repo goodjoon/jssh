@@ -1,6 +1,6 @@
 BMAX-B1|개발|bmax-b1|192.168.55.101|22|goodjoon|keiichi78
 맥미니 M4|개발|100.119.171.24|100.119.171.24|22|goodjoon|keiichi78
-GCP VM01|개발|goodjoon-claw01|34.22.75.33|22|hwajung10|
+GCP VM01|개발|goodjoon-claw01|34.22.75.33|22|hwajung10||~/.ssh/gcp_key
 GCP VM01 (ssh-cfg)|개발|goodjoon-claw01||||
 MACBOOK PRO i7 4C 16GB|개발|goodjoon-mac|100.99.79.47|22|goodjoon|keiichi78
 3060RTX-서버(64G/12G/1T)|개발|goodjoon-ai-ubuntu01|192.168.55.102|22|goodjoon|keiichi78
