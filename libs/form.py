@@ -169,7 +169,7 @@ def run_form(stdscr, title, info, fields):
 
         # ── 필드들 ────────────────────────────────────────────
         cursor_pos = None
-        for i, (label, _, is_pwd) in enumerate(fields):
+        for i, (label, _, is_pwd, choices) in enumerate(fields):
             y = fields_start_y + i * (1 + GAP)
             if y >= h - 3:
                 break
@@ -186,7 +186,11 @@ def run_form(stdscr, title, info, fields):
             # 값 문자열
             val_chars = values[i]
             val_str = "".join(val_chars)
-            disp = "●" * len(val_str) if is_pwd else val_str
+            
+            if choices is not None:
+                disp = f"◀ {val_str} ▶"
+            else:
+                disp = "●" * len(val_str) if is_pwd else val_str
 
             # 커서 주변으로 스크롤
             c = cursors[i]
@@ -253,6 +257,8 @@ def run_form(stdscr, title, info, fields):
 
         code = ord(ch) if isinstance(ch, str) else ch
 
+        cur_choices = fields[current][3]
+
         if code == 27:  # ESC
             return (None, 1)
         elif code in (10, 13):  # Enter → 저장
@@ -267,31 +273,46 @@ def run_form(stdscr, title, info, fields):
             current = (current + 1) % len(fields)
         elif code == curses.KEY_UP:
             current = (current - 1) % len(fields)
-        elif code == curses.KEY_LEFT:
-            if cursors[current] > 0:
-                cursors[current] -= 1
-        elif code == curses.KEY_RIGHT:
-            if cursors[current] < len(values[current]):
+            
+        # 선택형 필드 조작
+        elif cur_choices is not None:
+            if code in (curses.KEY_LEFT, curses.KEY_RIGHT, 32):  # 방향키 또는 Space
+                val_str = "".join(values[current])
+                idx = cur_choices.index(val_str) if val_str in cur_choices else 0
+                if code == curses.KEY_LEFT:
+                    next_idx = (idx - 1) % len(cur_choices)
+                else:
+                    next_idx = (idx + 1) % len(cur_choices)
+                values[current] = list(cur_choices[next_idx])
+                cursors[current] = len(values[current])
+                
+        # 일반 필드 조작
+        else:
+            if code == curses.KEY_LEFT:
+                if cursors[current] > 0:
+                    cursors[current] -= 1
+            elif code == curses.KEY_RIGHT:
+                if cursors[current] < len(values[current]):
+                    cursors[current] += 1
+            elif code in (1,):  # Ctrl-A → 줄 처음
+                cursors[current] = 0
+            elif code in (5,):  # Ctrl-E → 줄 끝
+                cursors[current] = len(values[current])
+            elif code in (11,):  # Ctrl-K → 커서 이후 삭제
+                values[current] = values[current][: cursors[current]]
+            elif code in (21,):  # Ctrl-U → 전체 삭제
+                values[current] = []
+                cursors[current] = 0
+            elif code in (127, curses.KEY_BACKSPACE, 8):  # Backspace
+                if cursors[current] > 0:
+                    del values[current][cursors[current] - 1]
+                    cursors[current] -= 1
+            elif code == curses.KEY_DC:  # Delete
+                if cursors[current] < len(values[current]):
+                    del values[current][cursors[current]]
+            elif isinstance(ch, str) and (ch.isprintable() or ord(ch) > 127):
+                values[current].insert(cursors[current], ch)
                 cursors[current] += 1
-        elif code in (1,):  # Ctrl-A → 줄 처음
-            cursors[current] = 0
-        elif code in (5,):  # Ctrl-E → 줄 끝
-            cursors[current] = len(values[current])
-        elif code in (11,):  # Ctrl-K → 커서 이후 삭제
-            values[current] = values[current][: cursors[current]]
-        elif code in (21,):  # Ctrl-U → 전체 삭제
-            values[current] = []
-            cursors[current] = 0
-        elif code in (127, curses.KEY_BACKSPACE, 8):  # Backspace
-            if cursors[current] > 0:
-                del values[current][cursors[current] - 1]
-                cursors[current] -= 1
-        elif code == curses.KEY_DC:  # Delete
-            if cursors[current] < len(values[current]):
-                del values[current][cursors[current]]
-        elif isinstance(ch, str) and (ch.isprintable() or ord(ch) > 127):
-            values[current].insert(cursors[current], ch)
-            cursors[current] += 1
 
 
 def main():
@@ -324,8 +345,19 @@ def main():
     for i in range(0, len(args), 3):
         label = args[i]
         value = args[i + 1]
-        is_pwd = args[i + 2] == "1"
-        fields.append((label, value, is_pwd))
+        type_arg = args[i + 2]
+        
+        is_pwd = False
+        choices = None
+        
+        if type_arg == "1":
+            is_pwd = True
+        elif type_arg.startswith("choice:"):
+            choices = type_arg.split(":", 1)[1].split(",")
+            if value not in choices:
+                value = choices[0]
+                
+        fields.append((label, value, is_pwd, choices))
 
     # curses는 터미널 직접 사용, stdout은 bash $() 캡처용으로 보존
     tty_fd = os.open("/dev/tty", os.O_RDWR)
