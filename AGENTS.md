@@ -1,7 +1,20 @@
 # 저장소 지침
 
 ## 프로젝트 구조와 모듈 구성
-`jssh-gum`은 메인 실행 스크립트이며 초기 설정, 환경 파일 로드, gum 기반 메뉴 흐름을 담당합니다. 공통 셸 모듈은 `libs/` 아래에 있습니다. `ui_utils.sh`는 터미널 UI, `ssh_utils.sh`는 SSH 연결, `installer.sh`는 의존성 설치를 맡습니다. 실행 중 사용하는 데이터 파일은 루트의 `default.conf`, `servers.list`입니다. `restore.sh`, `warp-offline-setup.sh`, `warp-remote-init-improved.sh`는 복구 또는 Warp 보조 스크립트입니다. `jssh-gum.bak`, `jssh-gum.tar.gz`는 백업 산출물로 보고 직접 수정하지 않습니다.
+`jssh-gum`은 메인 실행 스크립트이며 초기 설정, 환경 파일 로드, gum 기반 메뉴 흐름을 담당합니다. 공통 셸 모듈은 `libs/` 아래에 있습니다. `ui_utils.sh`는 터미널 UI, `ssh_utils.sh`는 SSH 연결, `installer.sh`는 의존성 설치를 맡습니다. `libs/form.py`는 Python curses 기반 폼 편집기로, `add_server` / `edit_server`에서 `python3 libs/form.py` 형태로 직접 호출됩니다. 실행 중 사용하는 데이터 파일은 루트의 `default.conf`, `servers.list`입니다. `restore.sh`, `warp-offline-setup.sh`, `warp-remote-init-improved.sh`, `warp-bootstrap.sh`는 복구 또는 Warp 보조 스크립트입니다. `jssh-gum.bak`, `jssh-gum.tar.gz`는 백업 산출물로 보고 직접 수정하지 않습니다.
+
+## servers.list 형식
+파이프(`|`) 구분 8개 필드: `별칭|구분|hostname|ip|port|user|password|ssh_key`
+- `ip`가 비어있으면 `hostname`을 SSH config alias로 사용 (ip/port/user 생략 가능)
+- `ssh_key` 필드가 있으면 패스워드 인증 대신 `-i ssh_key` 옵션으로 연결
+- 주석 행(`#`)과 빈 행은 무시됨
+
+## 의존성 및 런타임 동작
+- **필수**: `python3`, `gum`, `fzf` — 없으면 시작 시 자동 설치 마법사 실행
+- **권장**: `sshpass` — 없으면 패스워드 자동입력 불가 (연결은 됨)
+- `WARP_COMPATIBLE_MODE=true`(기본값): `exec ssh ...`로 셸 교체 → 연결 후 스크립트 종료
+- `WARP_COMPATIBLE_MODE=false`: 일반 실행 → 연결 종료 후 메뉴로 복귀
+- `default.conf`가 없으면 자동 생성됨, `servers.list`도 없으면 더미 예제로 자동 생성
 
 ## 빌드, 테스트, 개발 명령
 이 저장소는 별도 빌드 시스템 없이 Bash 스크립트 중심으로 운영됩니다.
