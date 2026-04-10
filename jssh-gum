@@ -343,7 +343,8 @@ PYEOF
                 --border=rounded \
                 --height=~100% \
                 --color='header:bold:38,prompt:46,pointer:46,hl:46,hl+:46,bg+:236,fg+:255,border:238,footer:241' \
-                --bind='esc:abort' \
+                --cycle \
+                --bind='esc:abort,left:page-up,right:page-down' \
                 2>/dev/null \
             || true
         )
