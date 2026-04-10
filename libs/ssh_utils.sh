@@ -121,7 +121,8 @@ connect_ssh() {
                             fi
 
                             # ssh-copy-id 실행
-                            if command ssh-copy-id -i "$pub_key" $port_opt "$ssh_target"; then
+                            # ssh-copy-id는 내부적으로 ssh를 호출하므로 추가적인 프롬프트를 방지하기 위해 ssh 옵션 전달
+                            if command ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$pub_key" $port_opt "$ssh_target"; then
                                 echo ""
                                 gum style --foreground 46 --bold "✅ 공개키 등록 성공! 접속을 시도합니다..."
                                 sleep 1
