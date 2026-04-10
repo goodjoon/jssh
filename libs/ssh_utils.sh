@@ -82,6 +82,7 @@ connect_ssh() {
         fi
     else
         # 패스워드 없이 직접 연결 (키 기반 인증)
+        ssh_args+=("-o" "PasswordAuthentication=no")
         if [[ "$use_exec" == "true" ]]; then
             exec ssh "${ssh_args[@]}"
         else
