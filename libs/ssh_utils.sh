@@ -68,22 +68,31 @@ connect_ssh() {
             # sshpass 자동 설치 시도
             if ensure_sshpass; then
                 # 설치 성공시 재귀 호출 (일반 실행)
-                connect_ssh "$user" "$ip" "$port" "$password" "$default_password" "false"
+                connect_ssh "$user" "$ip" "$port" "$password" "$default_password" "false" "$ssh_key"
                 return $?
             else
                 # ... (생략된 기존 코드)
                 echo "현재는 패스워드를 수동으로 입력해야 합니다."
-                command ssh "${ssh_args[@]}"
+                if [[ "$use_exec" == "true" ]]; then
+                    exec ssh "${ssh_args[@]}"
+                else
+                    command ssh "${ssh_args[@]}"
+                fi
             fi
         fi
     else
         # 패스워드 없이 직접 연결 (키 기반 인증)
-        command ssh "${ssh_args[@]}"
+        if [[ "$use_exec" == "true" ]]; then
+            exec ssh "${ssh_args[@]}"
+        else
+            command ssh "${ssh_args[@]}"
+        fi
     fi
 }
 
 # SSH 연결 함수 (exec 버전 - Warp 완전 호환)
 connect_ssh_exec() {
+    # 1: user, 2: ip, 3: port, 4: pwd, 5: default_pwd, 6: ssh_key
     connect_ssh "$1" "$2" "$3" "$4" "$5" "true" "$6"
 }
 
