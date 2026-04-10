@@ -874,9 +874,11 @@ connect_to_server() {
     
     # 연결 명령 미리보기
     local ssh_cmd="ssh"
-    [[ -n "$port" && "$port" != "22" ]] && ssh_cmd="$ssh_cmd -p $port"
     if [[ -n "$ssh_key" ]]; then
         ssh_cmd="$ssh_cmd -i $ssh_key"
+    fi
+    if [[ -n "$port" && "$port" != "22" ]]; then
+        ssh_cmd="$ssh_cmd -p $port"
     fi
     if [[ -n "$user" ]]; then
         ssh_cmd="$ssh_cmd $user@$ssh_target"
