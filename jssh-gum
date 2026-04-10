@@ -460,10 +460,10 @@ search_and_filter_servers() {
 
 # 서버 추가
 add_server() {
-    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다."
+    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다.\n인증방식 필드에서는 좌우 방향키나 Space를 눌러 값을 변경하세요."
 
     local form_out form_exit
-    local cur_alias="" cur_category="" cur_hostname="" cur_ip="" cur_port="$DEFAULT_PORT" cur_user="$DEFAULT_USER" cur_password="" cur_ssh_key=""
+    local cur_alias="" cur_category="" cur_hostname="" cur_ip="" cur_port="$DEFAULT_PORT" cur_user="$DEFAULT_USER" cur_auth="패스워드" cur_password="" cur_ssh_key=""
 
     while true; do
         form_out=$(python3 "$LIBS_DIR/form.py" \
@@ -475,6 +475,7 @@ add_server() {
             "IP 주소" "$cur_ip"      "0" \
             "포트"    "$cur_port"    "0" \
             "사용자"  "$cur_user"    "0" \
+            "인증방식" "$cur_auth"    "choice:패스워드,SSH 키" \
             "패스워드" "$cur_password" "1" \
             "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
 
@@ -489,8 +490,15 @@ add_server() {
         cur_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
         cur_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
         cur_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
-        cur_password=$( printf '%s\n' "$form_out" | sed -n '7p')
-        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+        cur_auth=$(     printf '%s\n' "$form_out" | sed -n '7p')
+        cur_password=$( printf '%s\n' "$form_out" | sed -n '8p')
+        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '9p')
+
+        if [[ "$cur_auth" == "패스워드" ]]; then
+            cur_ssh_key=""
+        elif [[ "$cur_auth" == "SSH 키" ]]; then
+            cur_password=""
+        fi
 
         if [[ "$form_exit" -eq 7 ]]; then
             # Ctrl-G: 키 생성 마법사 실행
@@ -706,7 +714,12 @@ edit_server() {
 
     local original_alias="$cur_alias" # 변경 감지를 위해 원본 백업
     local form_out form_exit
-    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다."
+    local INFO_MSG="호스트명이 ~/.ssh/config 에 등록된 경우 IP 주소, 포트, 사용자, 패스워드는 생략할 수 있습니다.\n인증방식 필드에서는 좌우 방향키나 Space를 눌러 값을 변경하세요."
+
+    local cur_auth="패스워드"
+    if [[ -n "$cur_ssh_key" ]]; then
+        cur_auth="SSH 키"
+    fi
 
     while true; do
         form_out=$(python3 "$LIBS_DIR/form.py" \
@@ -718,6 +731,7 @@ edit_server() {
             "IP 주소" "$cur_ip"      "0" \
             "포트"    "$cur_port"    "0" \
             "사용자"  "$cur_user"    "0" \
+            "인증방식" "$cur_auth"    "choice:패스워드,SSH 키" \
             "패스워드" "$cur_password" "1" \
             "SSH키"   "$cur_ssh_key" "0") && form_exit=0 || form_exit=$?
 
@@ -732,8 +746,15 @@ edit_server() {
         cur_ip=$(       printf '%s\n' "$form_out" | sed -n '4p')
         cur_port=$(     printf '%s\n' "$form_out" | sed -n '5p')
         cur_user=$(     printf '%s\n' "$form_out" | sed -n '6p')
-        cur_password=$( printf '%s\n' "$form_out" | sed -n '7p')
-        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '8p')
+        cur_auth=$(     printf '%s\n' "$form_out" | sed -n '7p')
+        cur_password=$( printf '%s\n' "$form_out" | sed -n '8p')
+        cur_ssh_key=$(  printf '%s\n' "$form_out" | sed -n '9p')
+
+        if [[ "$cur_auth" == "패스워드" ]]; then
+            cur_ssh_key=""
+        elif [[ "$cur_auth" == "SSH 키" ]]; then
+            cur_password=""
+        fi
 
         if [[ "$form_exit" -eq 7 ]]; then
             # Ctrl-G: 키 생성 마법사 실행
@@ -742,6 +763,7 @@ edit_server() {
             
             if [[ $wizard_exit -eq 0 && -n "$generated_key" ]]; then
                 cur_ssh_key=$(printf '%s\n' "$generated_key" | tail -n 1)
+                cur_auth="SSH 키"
             fi
             continue # 폼 다시 열기
         fi
